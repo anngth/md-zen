@@ -6,15 +6,31 @@ import { calculateScrollPercentage } from "./common";
  */
 
 export class ScrollSyncManager {
-  private isScrollingSyncRef: { current: boolean };
+  private static programmaticScrollTarget: HTMLElement | null = null;
+  private static releaseLockRafId: number | null = null;
   private rafId: number | null = null;
   private previewElement: HTMLElement | null = null;
   private editorElement: HTMLElement | null = null;
-  private lastScrollTime = 0;
-  private readonly THROTTLE_MS = 4; // ~240fps for ultra-smooth scrolling
 
-  constructor() {
-    this.isScrollingSyncRef = { current: false };
+  private static isProgrammaticScrollEvent(element: HTMLElement): boolean {
+    return ScrollSyncManager.programmaticScrollTarget === element;
+  }
+
+  private static runWithProgrammaticScrollLock(
+    target: HTMLElement,
+    callback: () => void,
+  ): void {
+    ScrollSyncManager.programmaticScrollTarget = target;
+    callback();
+
+    if (ScrollSyncManager.releaseLockRafId) {
+      cancelAnimationFrame(ScrollSyncManager.releaseLockRafId);
+    }
+
+    ScrollSyncManager.releaseLockRafId = requestAnimationFrame(() => {
+      ScrollSyncManager.programmaticScrollTarget = null;
+      ScrollSyncManager.releaseLockRafId = null;
+    });
   }
 
   /**
@@ -35,14 +51,9 @@ export class ScrollSyncManager {
    * Sync editor scroll to preview with ultra-smooth performance
    */
   syncEditorToPreview = (editorElement: HTMLElement): void => {
-    if (this.isScrollingSyncRef.current) return;
+    if (ScrollSyncManager.isProgrammaticScrollEvent(editorElement)) return;
 
-    // High-frequency throttling for ultra-smooth scrolling
-    const now = performance.now();
-    if (now - this.lastScrollTime < this.THROTTLE_MS) return;
-    this.lastScrollTime = now;
-
-    // Cancel any pending animation frame
+    // Coalesce high-frequency scroll events into one update per animation frame.
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
     }
@@ -51,15 +62,13 @@ export class ScrollSyncManager {
     this.rafId = requestAnimationFrame(() => {
       this.cacheElements();
 
-      if (!this.previewElement || this.isScrollingSyncRef.current) return;
+      if (!this.previewElement) return;
 
       const scrollPercentage = calculateScrollPercentage(
         editorElement.scrollTop,
         editorElement.scrollHeight,
         editorElement.clientHeight
       );
-
-      this.isScrollingSyncRef.current = true;
 
       // Edge snapping and pixel rounding to avoid resistance near extremes
       const editorMax = editorElement.scrollHeight - editorElement.clientHeight;
@@ -73,13 +82,14 @@ export class ScrollSyncManager {
         ? 0
         : atBottom
         ? previewScrollHeight
-        : Math.round(clamped * previewScrollHeight);
+        : clamped * previewScrollHeight;
 
-      // Direct assignment for instant, lag-free sync
-      this.previewElement.scrollTop = targetScrollTop;
-
-      // Reset sync flag immediately for maximum responsiveness
-      this.isScrollingSyncRef.current = false;
+      if (Math.abs(this.previewElement.scrollTop - targetScrollTop) > 1) {
+        const target = this.previewElement;
+        ScrollSyncManager.runWithProgrammaticScrollLock(target, () => {
+          target.scrollTop = targetScrollTop;
+        });
+      }
     });
   };
 
@@ -87,14 +97,9 @@ export class ScrollSyncManager {
    * Sync preview scroll to editor with ultra-smooth performance
    */
   syncPreviewToEditor = (previewElement: HTMLElement): void => {
-    if (this.isScrollingSyncRef.current) return;
+    if (ScrollSyncManager.isProgrammaticScrollEvent(previewElement)) return;
 
-    // High-frequency throttling for ultra-smooth scrolling
-    const now = performance.now();
-    if (now - this.lastScrollTime < this.THROTTLE_MS) return;
-    this.lastScrollTime = now;
-
-    // Cancel any pending animation frame
+    // Coalesce high-frequency scroll events into one update per animation frame.
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
     }
@@ -103,15 +108,13 @@ export class ScrollSyncManager {
     this.rafId = requestAnimationFrame(() => {
       this.cacheElements();
 
-      if (!this.editorElement || this.isScrollingSyncRef.current) return;
+      if (!this.editorElement) return;
 
       const scrollPercentage = calculateScrollPercentage(
         previewElement.scrollTop,
         previewElement.scrollHeight,
         previewElement.clientHeight
       );
-
-      this.isScrollingSyncRef.current = true;
 
       // Edge snapping and pixel rounding to avoid resistance near extremes
       const previewMax =
@@ -126,13 +129,14 @@ export class ScrollSyncManager {
         ? 0
         : atBottom
         ? editorScrollHeight
-        : Math.round(clamped * editorScrollHeight);
+        : clamped * editorScrollHeight;
 
-      // Direct assignment for instant, lag-free sync
-      this.editorElement.scrollTop = targetScrollTop;
-
-      // Reset sync flag immediately for maximum responsiveness
-      this.isScrollingSyncRef.current = false;
+      if (Math.abs(this.editorElement.scrollTop - targetScrollTop) > 1) {
+        const target = this.editorElement;
+        ScrollSyncManager.runWithProgrammaticScrollLock(target, () => {
+          target.scrollTop = targetScrollTop;
+        });
+      }
     });
   };
 
@@ -144,6 +148,5 @@ export class ScrollSyncManager {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
-    this.isScrollingSyncRef.current = false;
   };
 }
