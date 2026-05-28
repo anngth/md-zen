@@ -17,7 +17,7 @@ import type { EditorRef } from "@components/Editor";
 const App: React.FC = () => {
   const [filename, setFilename] = useState(
     localStorage.getItem(STORAGE_KEYS.filename) ||
-      `${FILE_CONFIG.defaultFilename}${FILE_CONFIG.extensions.markdown}`
+      `${FILE_CONFIG.defaultFilename}${FILE_CONFIG.extensions.markdown}`,
   );
   const [content, setContent] = useState(
     loadFromLocalStorage() ||
@@ -92,23 +92,25 @@ def hello():
 - [ ] Pending task
 - [ ] Another task
 
-**Happy writing!** 🚀`
+**Happy writing!** 🚀`,
   );
   const [isDarkMode, setIsDarkMode] = useState(() => {
     // Check if dark mode was previously enabled
     const savedDarkMode = localStorage.getItem(STORAGE_KEYS.isDarkMode);
-    const prefersDark = savedDarkMode === 'true' || 
-      (!savedDarkMode && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    
+    const prefersDark =
+      savedDarkMode === "true" ||
+      (!savedDarkMode &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches);
+
     // Apply dark class immediately on load
     if (prefersDark) {
-      document.documentElement.classList.add('dark');
+      document.documentElement.classList.add("dark");
     }
-    
+
     return prefersDark;
   });
   const [fontSize, setFontSize] = useState<number>(
-    EDITOR_CONFIG.fontSize.default
+    EDITOR_CONFIG.fontSize.default,
   );
   const [autoSave, setAutoSave] = useState(true);
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
@@ -126,14 +128,14 @@ def hello():
   const toggleTheme = () => {
     const newDarkMode = !isDarkMode;
     setIsDarkMode(newDarkMode);
-    
+
     // Toggle dark class on html element
     if (newDarkMode) {
-      document.documentElement.classList.add('dark');
+      document.documentElement.classList.add("dark");
     } else {
-      document.documentElement.classList.remove('dark');
+      document.documentElement.classList.remove("dark");
     }
-    
+
     // Save preference
     localStorage.setItem(STORAGE_KEYS.isDarkMode, String(newDarkMode));
   };
@@ -158,7 +160,7 @@ def hello():
     downloadFile(
       baseFilename + FILE_CONFIG.extensions.markdown,
       content,
-      FILE_CONFIG.mimeTypes.markdown
+      FILE_CONFIG.mimeTypes.markdown,
     );
   };
 
@@ -197,13 +199,13 @@ def hello():
       } else {
         console.error("❌ Failed to generate PDF");
         console.log(
-          "💡 Tip: Try using browser's print function (Ctrl+P) as alternative"
+          "💡 Tip: Try using browser's print function (Ctrl+P) as alternative",
         );
       }
     } catch (error) {
       console.error("❌ PDF download error:", error);
       console.log(
-        "💡 Tip: Try using browser's print function (Ctrl+P) as alternative"
+        "💡 Tip: Try using browser's print function (Ctrl+P) as alternative",
       );
     } finally {
       setIsGeneratingPDF(false);
