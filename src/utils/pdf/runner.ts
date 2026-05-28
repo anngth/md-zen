@@ -14,9 +14,26 @@ type PdfGenerateMessage = {
 };
 
 // Utils
+
+/**
+ * The trusted origin we accept messages from and send messages to.
+ * We capture it once at module load time from the opener's origin when
+ * available, falling back to our own origin (same-origin runner).
+ */
+const TRUSTED_ORIGIN: string = (() => {
+  try {
+    // window.opener.location.origin is accessible only for same-origin openers,
+    // which is exactly the case here (runner is served from the same Vite origin).
+    return window.opener?.location?.origin ?? window.location.origin;
+  } catch {
+    return window.location.origin;
+  }
+})();
+
 const postToOpener = (msg: Record<string, unknown>) => {
   try {
-    window.opener?.postMessage(msg, "*");
+    // Target the exact origin instead of "*" to prevent message interception
+    window.opener?.postMessage(msg, TRUSTED_ORIGIN);
   } catch {
     // ignore
   }
@@ -76,7 +93,7 @@ const signalReadiness = async () => {
   console.warn(
     "MDZen PDF: window.opener not available after",
     maxAttempts,
-    "attempts"
+    "attempts",
   );
 };
 
@@ -87,6 +104,10 @@ signalReadiness().catch(() => {
 
 // Listen for messages from the opener
 window.addEventListener("message", async (event: MessageEvent) => {
+  // Validate that the message comes from our trusted origin and from the opener
+  if (event.origin !== TRUSTED_ORIGIN) return;
+  if (event.source !== window.opener) return;
+
   const data =
     (event && (event.data as PdfGenerateMessage)) || ({} as PdfGenerateMessage);
   if (!data || data.type !== "mdzen-generate-pdf") return;

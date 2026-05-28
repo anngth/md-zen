@@ -1,4 +1,4 @@
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -34,14 +34,19 @@ import { validateMarkdownLength } from "@lib/markdown";
 import { colors } from "./colors";
 
 /**
- * Create CodeMirror extensions
+ * Create CodeMirror extensions.
+ * Pass `themeCompartment` and `highlightCompartment` so the caller can
+ * hot-swap theme/highlight later via `compartment.reconfigure(...)` without
+ * destroying and recreating the entire EditorView.
  */
 export const createEditorExtensions = (
   fontSize: number,
   isDarkMode: boolean,
   onContentChange: (content: string) => void,
   onScroll: (event: Event) => void,
-  contentChangeTimeoutRef: { current: number | null }
+  contentChangeTimeoutRef: { current: number | null },
+  themeCompartment: Compartment = new Compartment(),
+  highlightCompartment: Compartment = new Compartment(),
 ) => {
   const extensions = [
     // Core extensions
@@ -53,7 +58,9 @@ export const createEditorExtensions = (
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),
     indentOnInput(),
-    syntaxHighlighting(createHighlightStyle(isDarkMode)),
+    highlightCompartment.of(
+      syntaxHighlighting(createHighlightStyle(isDarkMode)),
+    ),
     bracketMatching(),
     closeBrackets(),
     autocompletion(),
@@ -97,8 +104,8 @@ export const createEditorExtensions = (
       scroll: onScroll,
     }),
 
-    // Theme
-    createEditorTheme(fontSize, isDarkMode),
+    // Theme (wrapped in compartment for hot-swap reconfiguration)
+    themeCompartment.of(createEditorTheme(fontSize, isDarkMode)),
   ];
 
   return extensions;
@@ -109,26 +116,72 @@ export const createEditorExtensions = (
  */
 export const createHighlightStyle = (isDarkMode: boolean) => {
   return HighlightStyle.define([
-    { tag: tags.heading1, color: isDarkMode ? "#e5e7eb" : "#1f2937", fontWeight: "800", fontSize: "1.5em" },
-    { tag: tags.heading2, color: isDarkMode ? "#e5e7eb" : "#1f2937", fontWeight: "700", fontSize: "1.3em" },
-    { tag: tags.heading3, color: isDarkMode ? "#e5e7eb" : "#374151", fontWeight: "600", fontSize: "1.15em" },
-    { tag: tags.heading, color: isDarkMode ? "#d1d5db" : "#374151", fontWeight: "600" },
-    { tag: tags.strong, color: isDarkMode ? "#fbbf24" : "#92400e", fontWeight: "700" },
-    { tag: tags.emphasis, color: isDarkMode ? "#d1d5db" : "#4b5563", fontStyle: "italic" },
-    { tag: tags.link, color: isDarkMode ? "#93c5fd" : "#3b82f6", textDecoration: "underline" },
+    {
+      tag: tags.heading1,
+      color: isDarkMode ? "#e5e7eb" : "#1f2937",
+      fontWeight: "800",
+      fontSize: "1.5em",
+    },
+    {
+      tag: tags.heading2,
+      color: isDarkMode ? "#e5e7eb" : "#1f2937",
+      fontWeight: "700",
+      fontSize: "1.3em",
+    },
+    {
+      tag: tags.heading3,
+      color: isDarkMode ? "#e5e7eb" : "#374151",
+      fontWeight: "600",
+      fontSize: "1.15em",
+    },
+    {
+      tag: tags.heading,
+      color: isDarkMode ? "#d1d5db" : "#374151",
+      fontWeight: "600",
+    },
+    {
+      tag: tags.strong,
+      color: isDarkMode ? "#fbbf24" : "#92400e",
+      fontWeight: "700",
+    },
+    {
+      tag: tags.emphasis,
+      color: isDarkMode ? "#d1d5db" : "#4b5563",
+      fontStyle: "italic",
+    },
+    {
+      tag: tags.link,
+      color: isDarkMode ? "#93c5fd" : "#3b82f6",
+      textDecoration: "underline",
+    },
     { tag: tags.url, color: isDarkMode ? "#86efac" : "#16a34a" },
-    { tag: tags.monospace, color: isDarkMode ? "#fca5a1" : "#b91c1c", backgroundColor: isDarkMode ? "#1e293b" : "#f9fafb" },
-    { tag: tags.quote, color: isDarkMode ? "#9ca3af" : "#6b7280", fontStyle: "italic" },
+    {
+      tag: tags.monospace,
+      color: isDarkMode ? "#fca5a1" : "#b91c1c",
+      backgroundColor: isDarkMode ? "#1e293b" : "#f9fafb",
+    },
+    {
+      tag: tags.quote,
+      color: isDarkMode ? "#9ca3af" : "#6b7280",
+      fontStyle: "italic",
+    },
     { tag: tags.list, color: isDarkMode ? "#d1d5db" : "#4b5563" },
     { tag: tags.contentSeparator, color: isDarkMode ? "#6b7280" : "#d1d5db" },
-    { tag: tags.strikethrough, color: isDarkMode ? "#9ca3af" : "#9ca3af", textDecoration: "line-through" },
+    {
+      tag: tags.strikethrough,
+      color: isDarkMode ? "#9ca3af" : "#9ca3af",
+      textDecoration: "line-through",
+    },
   ]);
 };
 
 /**
  * Create editor theme
  */
-export const createEditorTheme = (fontSize: number, isDarkMode: boolean = false) => {
+export const createEditorTheme = (
+  fontSize: number,
+  isDarkMode: boolean = false,
+) => {
   return EditorView.theme({
     "&": {
       fontSize: `${fontSize}px`,

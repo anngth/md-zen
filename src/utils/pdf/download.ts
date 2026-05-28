@@ -3,7 +3,7 @@ import { buildBaseHtmlDocument } from "../fileHelpers";
 
 export function downloadAsPDF(
   htmlContent: string | Promise<string>,
-  filename: string = "document.pdf"
+  filename: string = "document.pdf",
 ): Promise<boolean> {
   return new Promise((resolve) => {
     try {
@@ -61,25 +61,34 @@ export function downloadAsPDF(
 
       // Safety timeout in case nothing comes back
       const globalTimeout = window.setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        // Settle immediately so any in-flight postPayload promise sees
+        // settled === true before it reaches postMessage.
+        settle(false);
         try {
-          // As a last resort, ask the new window to print its content and close
+          // As a last resort, open the browser print dialog so the user can
+          // still get a printout.
           pdfWindow.focus();
           pdfWindow.print();
-          setTimeout(() => {
-            try {
-              pdfWindow.close();
-            } catch {
-              // ignore close errors
-            }
-            settle(true);
-          }, 500);
         } catch {
-          settle(false);
+          // ignore print errors
         }
+        // Close the window after a short delay to let the print dialog open.
+        setTimeout(() => {
+          try {
+            pdfWindow.close();
+          } catch {
+            // ignore close errors
+          }
+        }, 500);
       }, 10000);
 
       // Listen for completion and ready messages
       let runnerReady = false;
+      // Guard against posting the payload more than once. All three trigger
+      // paths (mdzen-pdf-ready, 200 ms fallback, onload) share this flag.
+      let payloadSent = false;
+
       const onMessage = (event: MessageEvent) => {
         // Only accept messages from the PDF window we opened
         if (event.source !== pdfWindow) return;
@@ -111,11 +120,26 @@ export function downloadAsPDF(
       };
       window.addEventListener("message", onMessage);
 
-      // Post the payload to the new window when it's ready
+      // Post the payload to the new window when it's ready.
+      // The guard ensures only the first caller (ready signal, 200 ms fallback,
+      // or onload) actually sends — the others are no-ops.
       const postPayload = () => {
+        if (payloadSent) return;
+        // Also bail if the request has already timed out or otherwise settled —
+        // e.g. pdfWindow.onload can fire within the 500 ms close delay after
+        // the global timeout has already run.
+        if (settled) return;
+        payloadSent = true;
+
         // Resolve the HTML content if it's a Promise, then post the payload
         Promise.resolve(htmlContent)
           .then((resolvedHtmlContent) => {
+            // Re-check settled here: the promise may have been resolving while
+            // the global timeout fired. Without this check, postMessage would
+            // still run during the 500 ms window between the timeout callback
+            // and settle(false).
+            if (settled) return;
+
             try {
               const options = {
                 margin: [0.5, 0.5, 0.5, 0.5],
@@ -136,12 +160,49 @@ export function downloadAsPDF(
                 pagebreak: { mode: ["avoid-all", "css", "legacy"] },
               } as const;
 
-              const htmlToSend = /^\s*<!DOCTYPE/i.test(resolvedHtmlContent)
-                ? resolvedHtmlContent
-                : buildBaseHtmlDocument(resolvedHtmlContent, {
-                    title: "MDZen - PDF",
-                    styles: pdfStyles,
+              let htmlToSend: string;
+              if (/^\s*<!DOCTYPE/i.test(resolvedHtmlContent)) {
+                // Caller passed a full document. Strip any CSP meta tag before
+                // forwarding — a CSP in the runner document would block the
+                // dynamic import("html2pdf.js") that the runner needs.
+                // Use DOMParser so attribute order doesn't matter (e.g. both
+                // <meta http-equiv="CSP" content="..."> and
+                // <meta content="..." http-equiv="CSP"> are handled correctly).
+                try {
+                  const doc = new DOMParser().parseFromString(
+                    resolvedHtmlContent,
+                    "text/html",
+                  );
+                  // Iterate all meta tags and compare http-equiv
+                  // case-insensitively — the CSS `i` flag is not universally
+                  // supported in older engines, and callers may use any casing.
+                  doc.querySelectorAll("meta").forEach((el) => {
+                    if (
+                      el.getAttribute("http-equiv")?.toLowerCase() ===
+                      "content-security-policy"
+                    ) {
+                      el.remove();
+                    }
                   });
+                  htmlToSend = doc.documentElement.outerHTML;
+                } catch {
+                  // DOMParser unavailable — fall back to the regex, accepting
+                  // the known attribute-order limitation.
+                  htmlToSend = resolvedHtmlContent.replace(
+                    /<meta[^>]+http-equiv\s*=\s*["']Content-Security-Policy["'][^>]*>/gi,
+                    "",
+                  );
+                }
+              } else {
+                htmlToSend = buildBaseHtmlDocument(resolvedHtmlContent, {
+                  title: "MDZen - PDF",
+                  styles: pdfStyles,
+                  // No CSP in the PDF runner document — the runner uses
+                  // document.write() then dynamic import("html2pdf.js"),
+                  // which would be blocked by default-src 'none'.
+                  includeCsp: false,
+                });
+              }
 
               pdfWindow.postMessage(
                 {
@@ -150,7 +211,7 @@ export function downloadAsPDF(
                   filename,
                   options,
                 },
-                window.location.origin
+                window.location.origin,
               );
             } catch (err) {
               console.error("Failed to post PDF payload:", err);

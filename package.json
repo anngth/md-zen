@@ -49,5 +49,21 @@
     "typescript-eslint": "^8.35.1",
     "vite": "^7.3.2"
   },
-  "packageManager": "pnpm@10.18.1"
+  "packageManager": "pnpm@10.18.1",
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "core-js",
+      "esbuild"
+    ],
+    "overrides": {
+      "jspdf": "^4.2.1",
+      "minimatch@<3.1.4": "^3.1.4",
+      "minimatch@>=9.0.0 <9.0.7": "^9.0.7",
+      "flatted": "^3.4.2",
+      "ajv": "^6.14.0",
+      "brace-expansion@<1.1.13": "^1.1.13",
+      "brace-expansion@>=2.0.0 <2.0.3": "^2.0.3",
+      "postcss": "^8.5.10"
+    }
+  }
 }

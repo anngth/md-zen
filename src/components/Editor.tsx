@@ -1,8 +1,14 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useLayoutEffect } from "react";
 import { EditorView } from "@codemirror/view";
+import { Compartment } from "@codemirror/state";
 import { undo, redo } from "@codemirror/commands";
 import { validateMarkdownLength } from "@lib/markdown";
-import { createEditorExtensions } from "@utils/editorExtensions";
+import {
+  createEditorExtensions,
+  createEditorTheme,
+  createHighlightStyle,
+} from "@utils/editorExtensions";
+import { syntaxHighlighting } from "@codemirror/language";
 import { ScrollSyncManager } from "@utils/scrollSync";
 import { colors } from "@utils/colors";
 
@@ -25,6 +31,17 @@ const Editor = React.forwardRef<EditorRef, EditorProps>(
     const viewRef = useRef<EditorView | null>(null);
     const contentChangeTimeoutRef = useRef<number | null>(null);
     const scrollSyncManager = useRef(new ScrollSyncManager());
+    // Compartments allow hot-swapping theme/highlight without recreating the editor
+    const themeCompartment = useRef(new Compartment());
+    const highlightCompartment = useRef(new Compartment());
+    // Keep a stable ref to onContentChange so the CodeMirror update listener
+    // always calls the latest version without needing to recreate the editor.
+    // useLayoutEffect runs synchronously after DOM mutations, before paint,
+    // closing the tiny window where a passive useEffect could be stale.
+    const onContentChangeRef = useRef(onContentChange);
+    useLayoutEffect(() => {
+      onContentChangeRef.current = onContentChange;
+    });
 
     // Handle scroll synchronization
     const handleScroll = (event: Event) => {
@@ -32,7 +49,9 @@ const Editor = React.forwardRef<EditorRef, EditorProps>(
       scrollSyncManager.current.syncEditorToPreview(editorElement);
     };
 
-    // Initialize CodeMirror
+    // Initialize CodeMirror once on mount. The empty dep array is intentional:
+    // theme/fontSize are handled by the Compartment effect below, and
+    // onContentChange is accessed via onContentChangeRef so it never goes stale.
     useEffect(() => {
       if (!editorRef.current || viewRef.current) {
         return;
@@ -41,9 +60,11 @@ const Editor = React.forwardRef<EditorRef, EditorProps>(
       const extensions = createEditorExtensions(
         fontSize,
         isDarkMode,
-        onContentChange,
+        (newContent) => onContentChangeRef.current(newContent),
         handleScroll,
-        contentChangeTimeoutRef
+        contentChangeTimeoutRef,
+        themeCompartment.current,
+        highlightCompartment.current,
       );
 
       const view = new EditorView({
@@ -54,17 +75,22 @@ const Editor = React.forwardRef<EditorRef, EditorProps>(
 
       viewRef.current = view;
 
+      // Copy mutable refs to local variables so the cleanup closure captures
+      // a stable snapshot — satisfies react-hooks/exhaustive-deps.
+      const timeoutRef = contentChangeTimeoutRef;
+      const syncManager = scrollSyncManager.current;
+
       return () => {
         if (viewRef.current) {
           viewRef.current.destroy();
           viewRef.current = null;
         }
-        if (contentChangeTimeoutRef.current) {
-          clearTimeout(contentChangeTimeoutRef.current);
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
         }
-        scrollSyncManager.current.cleanup();
+        syncManager.cleanup();
       };
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps -- intentional mount-only init, see comment above
 
     // Update content when prop changes
     useEffect(() => {
@@ -80,30 +106,21 @@ const Editor = React.forwardRef<EditorRef, EditorProps>(
       }
     }, [content]);
 
-    // Update theme and font size
+    // Reconfigure theme and font size via Compartments — preserves undo history,
+    // selection, and scroll position instead of destroying/recreating the editor.
     useEffect(() => {
       if (!viewRef.current) return;
 
-      const currentContent = viewRef.current.state.doc.toString();
-      const parent = viewRef.current.dom.parentElement;
-
-      viewRef.current.destroy();
-
-      const extensions = createEditorExtensions(
-        fontSize,
-        isDarkMode,
-        onContentChange,
-        handleScroll,
-        contentChangeTimeoutRef
-      );
-
-      const view = new EditorView({
-        doc: currentContent,
-        parent: parent || editorRef.current!,
-        extensions,
+      viewRef.current.dispatch({
+        effects: [
+          themeCompartment.current.reconfigure(
+            createEditorTheme(fontSize, isDarkMode),
+          ),
+          highlightCompartment.current.reconfigure(
+            syntaxHighlighting(createHighlightStyle(isDarkMode)),
+          ),
+        ],
       });
-
-      viewRef.current = view;
     }, [isDarkMode, fontSize]);
 
     // Public methods for toolbar actions
@@ -111,10 +128,13 @@ const Editor = React.forwardRef<EditorRef, EditorProps>(
       if (viewRef.current) {
         const view = viewRef.current;
         const selection = view.state.selection.main;
+        // Read the live document from CodeMirror — not the React `content` prop
+        // which may lag behind due to the debounced update listener.
+        const currentDoc = view.state.doc.toString();
         const newContent =
-          content.substring(0, selection.from) +
+          currentDoc.substring(0, selection.from) +
           text +
-          content.substring(selection.to);
+          currentDoc.substring(selection.to);
 
         if (validateMarkdownLength(newContent)) {
           const transaction = view.state.update({
@@ -164,7 +184,7 @@ const Editor = React.forwardRef<EditorRef, EditorProps>(
         </div>
       </div>
     );
-  }
+  },
 );
 
 Editor.displayName = "Editor";

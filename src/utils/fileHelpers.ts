@@ -1,7 +1,7 @@
 export function downloadFile(
   filename: string,
   content: string,
-  contentType: string
+  contentType: string,
 ) {
   const blob = new Blob([content], { type: contentType });
   const url = URL.createObjectURL(blob);
@@ -18,16 +18,38 @@ export function buildBaseHtmlDocument(
   options: {
     title?: string;
     styles?: string;
-  } = {}
+    /** Set to false to omit the Content-Security-Policy meta tag.
+     *  Must be false for documents used internally (e.g. PDF runner) where
+     *  the CSP would block dynamic script imports needed by html2pdf.js. */
+    includeCsp?: boolean;
+  } = {},
 ): string {
-  const { title = "MDZen - Minimal Markdown Editor", styles = "" } = options;
+  const {
+    title = "MDZen - Minimal Markdown Editor",
+    styles = "",
+    includeCsp = true,
+  } = options;
+
+  // Escape title to prevent HTML injection via document title
+  const safeTitle = title
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+  // CSP for user-facing exported files. img-src includes both https: and http:
+  // to match what the sanitizer allows, plus data: for base64 images.
+  const cspTag = includeCsp
+    ? `\n  <!-- CSP restricts what the exported file can load when opened in a browser -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline';" />`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />${cspTag}
+  <title>${safeTitle}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; line-height: 1.6; }
     code { background: #f4f4f4; padding: 0.2rem 0.4rem; border-radius: 3px; }
@@ -42,14 +64,29 @@ export function buildBaseHtmlDocument(
   </html>`;
 }
 
-// Download HTML by accepting either a full document or body HTML
+// Download HTML by accepting either a full document or body HTML.
+// We always re-wrap through buildBaseHtmlDocument so the CSP meta tag is
+// guaranteed to be present. If the caller passes a full document, we use
+// DOMParser to extract the <body> content reliably before re-wrapping.
 export function downloadHtml(filename: string, bodyOrFullHtml: string) {
   const looksLikeDoc =
     /^\s*<!DOCTYPE/i.test(bodyOrFullHtml) || /<html[\s>]/i.test(bodyOrFullHtml);
-  const html = looksLikeDoc
-    ? bodyOrFullHtml
-    : buildBaseHtmlDocument(bodyOrFullHtml);
-  // Use a standard HTML content type with UTF-8 charset
+
+  let bodyContent: string;
+  if (looksLikeDoc) {
+    // Use DOMParser for reliable extraction — handles missing <body>, complex
+    // attributes, and self-closing tags that trip up regex-based approaches.
+    try {
+      const doc = new DOMParser().parseFromString(bodyOrFullHtml, "text/html");
+      bodyContent = doc.body?.innerHTML ?? bodyOrFullHtml;
+    } catch {
+      bodyContent = bodyOrFullHtml;
+    }
+  } else {
+    bodyContent = bodyOrFullHtml;
+  }
+
+  const html = buildBaseHtmlDocument(bodyContent);
   downloadFile(filename, html, "text/html;charset=utf-8");
 }
 

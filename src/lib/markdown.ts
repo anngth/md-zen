@@ -42,8 +42,13 @@ const sanitizeConfig = {
     "span",
   ],
   ALLOWED_ATTR: ["href", "src", "alt", "title", "class", "id"],
-  ALLOWED_URI_REGEXP:
-    /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|data):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+  // Allow:
+  //   - absolute safe protocols: https?, mailto, tel
+  //   - safe relative URLs: #anchors, /path (but NOT //protocol-relative), ./, ../
+  //   data:image is intentionally excluded here; the uponSanitizeAttribute hook
+  //   below handles it with forceKeepAttr only for <img src>, keeping the global
+  //   allowlist tight.
+  ALLOWED_URI_REGEXP: /^(?:https?|mailto|tel):|^(?:#|\/(?!\/)|\.\.?\/)/i,
   FORBID_TAGS: [
     "script",
     "object",
@@ -55,6 +60,45 @@ const sanitizeConfig = {
   ],
   FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "style"],
 };
+
+// Register the uponSanitizeAttribute hook exactly once.
+// A module-level variable resets on every Vite HMR re-evaluation, so we
+// persist the flag on globalThis which survives across HMR cycles.
+const _hmrKey = "__mdzen_dompurify_hook_registered__";
+if (!(globalThis as Record<string, unknown>)[_hmrKey]) {
+  (globalThis as Record<string, unknown>)[_hmrKey] = true;
+
+  // Use uponSanitizeAttribute (fires before DOMPurify decides to keep/remove the
+  // value) to enforce per-element rules for data: URIs:
+  //   - <img src>  → safe base64 image data URIs are force-kept here (they are
+  //                  intentionally absent from ALLOWED_URI_REGEXP so no other
+  //                  tag/attr can accidentally inherit the allowance)
+  //   - <a href>   → all data: URIs are removed (belt-and-suspenders)
+  DOMPurify.addHook("uponSanitizeAttribute", (node, data) => {
+    const tag = (node as Element).tagName;
+    const { attrName, attrValue } = data;
+
+    if (tag === "IMG" && attrName === "src") {
+      if (/^data:/i.test(attrValue)) {
+        if (/^data:image\/(png|jpeg|gif|webp);base64,/i.test(attrValue)) {
+          // Safe base64 image — explicitly allow it so DOMPurify keeps it
+          data.forceKeepAttr = true;
+        } else {
+          // Any other data: URI on an image — remove the attribute entirely so
+          // the browser doesn't fire a request for an empty src=""
+          data.keepAttr = false;
+        }
+      }
+    }
+
+    if (tag === "A" && attrName === "href") {
+      if (/^data:/i.test(attrValue)) {
+        // Remove the attribute entirely — href="" navigates to the current page
+        data.keepAttr = false;
+      }
+    }
+  });
+}
 
 export async function parseMarkdown(markdown: string): Promise<string> {
   try {

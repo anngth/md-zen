@@ -82,6 +82,14 @@ pnpm dev
 - **Build Tool**: Vite
 - **Package Manager**: pnpm
 
+## Known Limitations
+
+### Relative links in Markdown
+
+The preview sanitizer allows explicit relative URL prefixes: `#anchor`, `/path`, `./path`, and `../path`. Bare relative paths without a prefix — such as `images/photo.png` or `other-doc.md` — are stripped from `href` and `src` attributes.
+
+This is intentional: MDZen is a web-based editor with no concept of a local file-system base URL, so bare relative paths cannot be resolved meaningfully and could be confused with protocol-relative URLs (`//evil.example`). Use explicit prefixes (`./images/photo.png`) or absolute HTTPS URLs for images and links.
+
 ## Contributing
 
 1. Fork the repository

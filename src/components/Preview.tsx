@@ -15,6 +15,9 @@ const Preview: React.FC<PreviewProps> = ({ content }) => {
   const debounceTimeoutRef = useRef<number | null>(null);
   const lastContentRef = useRef<string>("");
   const scrollSyncManager = useRef(new ScrollSyncManager());
+  // Monotonically increasing counter — each parse gets a revision number.
+  // When the promise resolves we only apply the result if it's still current.
+  const revisionRef = useRef<number>(0);
 
   React.useEffect(() => {
     // Copy ref to avoid stale closure issues
@@ -24,6 +27,11 @@ const Preview: React.FC<PreviewProps> = ({ content }) => {
     if (content === lastContentRef.current) {
       return;
     }
+
+    // Increment revision immediately on every content change so any in-flight
+    // parse (already queued in requestIdleCallback) is invalidated right away,
+    // before the debounce timer even fires.
+    const revision = ++revisionRef.current;
 
     // Clear existing timeout
     if (debounceTimeoutRef.current) {
@@ -35,19 +43,20 @@ const Preview: React.FC<PreviewProps> = ({ content }) => {
       // Update last content reference
       lastContentRef.current = content;
 
+      const runParse = () => {
+        parseMarkdown(content).then((result) => {
+          // Only apply if no newer content change has arrived
+          if (revision === revisionRef.current) {
+            setHtmlContent(result);
+          }
+        });
+      };
+
       // Use requestIdleCallback for non-blocking parsing
       if (window.requestIdleCallback) {
-        window.requestIdleCallback(
-          () => {
-            parseMarkdown(content).then(setHtmlContent);
-          },
-          { timeout: 100 } // Fallback timeout for better responsiveness
-        );
+        window.requestIdleCallback(runParse, { timeout: 100 });
       } else {
-        // Use requestAnimationFrame as fallback for smooth updates
-        requestAnimationFrame(() => {
-          parseMarkdown(content).then(setHtmlContent);
-        });
+        requestAnimationFrame(runParse);
       }
     }, EDITOR_CONFIG.debounce.preview);
 
